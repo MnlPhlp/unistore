@@ -8,6 +8,8 @@ use wasm_bindgen::{JsCast, JsValue};
 
 use crate::{Key, UniStore, UniTable, Value};
 
+pub type Table = String;
+
 thread_local! {
     static DBS: Mutex<Vec<Rc<idb::Database>>> = Mutex::new(Vec::new());
 }
