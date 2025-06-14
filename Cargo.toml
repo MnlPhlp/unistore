@@ -1,0 +1,24 @@
+[package]
+name = "unistore"
+version = "0.1.0"
+edition = "2024"
+authors = ["Manuel Philipp"]
+description = "simple storage abstraction that works on wasm and native Targets"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/MnlPhlp/unistore"
+
+[dependencies]
+serde = "1.0.219"
+thiserror = "2.0.12"
+
+# [target.'cfg(target_arch = "wasm32")'.dependencies]
+idb = "0.6.4"
+serde-wasm-bindgen = "0.6.5"
+thread_local = "1.1.9"
+wasm-bindgen = "0.2.100"
+
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+
+[dev-dependencies]
+tokio = { version = "1.45.1", features = ["macros", "rt-multi-thread"] }
