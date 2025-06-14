@@ -1,29 +1,32 @@
 use fjall::{Keyspace, PartitionCreateOptions, PartitionHandle, Slice};
 use futures::{
-    SinkExt, StreamExt,
+    SinkExt,
     channel::{mpsc, oneshot},
-    executor::{BlockingStream, block_on_stream},
+    executor::block_on_stream,
 };
 
-use crate::{Key, UniStore, UniTable, Value};
+use crate::{AsKey, Key, UniStore, UniTable, Value};
 
 pub type Table = PartitionHandle;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("Fjall error: {0}")]
     Fjall(#[from] fjall::Error),
+    #[error("Store is not initialized")]
     StoreNotInitialized,
+    #[error("Sending to mpsc channel failed: {0}")]
     Mpsc(#[from] mpsc::SendError),
+    #[error("Receiving from oneshot channel failed: {0}")]
     OneShot(#[from] oneshot::Canceled),
+    #[error("Key type mismatch: {0}")]
     KeyTypeMismatch(rmp_serde::decode::Error),
+    #[error("Table already exists with different Value type")]
     ValueTypeMismatch(rmp_serde::decode::Error),
+    #[error("RMP encoding error: {0}")]
     RmpEncode(#[from] rmp_serde::encode::Error),
+    #[error("RMP decoding error: {0}")]
     RmpDecode(#[from] rmp_serde::decode::Error),
-}
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "native::Error: {self:?}")
-    }
 }
 
 fn get_path(name: &str) -> String {
@@ -105,6 +108,25 @@ impl Database {
         .await?;
         resp_rx.await?
     }
+
+    async fn len(&self, table: PartitionHandle) -> Result<usize, Error> {
+        let mut tx = self.0.clone();
+        let (resp_tx, resp_rx) = oneshot::channel();
+        tx.send(Action::Len { table, resp_tx }).await?;
+        resp_rx.await?
+    }
+
+    async fn remove(&self, table: PartitionHandle, key: Slice) -> Result<(), Error> {
+        let mut tx = self.0.clone();
+        let (resp_tx, resp_rx) = oneshot::channel();
+        tx.send(Action::Remove {
+            table,
+            key,
+            resp_tx,
+        })
+        .await?;
+        resp_rx.await?
+    }
 }
 
 enum Action {
@@ -144,6 +166,15 @@ enum Action {
         key: Slice,
         resp_tx: oneshot::Sender<Result<bool, Error>>,
     },
+    Len {
+        table: PartitionHandle,
+        resp_tx: oneshot::Sender<Result<usize, Error>>,
+    },
+    Remove {
+        table: PartitionHandle,
+        key: Slice,
+        resp_tx: oneshot::Sender<Result<(), Error>>,
+    },
 }
 impl std::fmt::Debug for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -167,6 +198,10 @@ impl std::fmt::Debug for Action {
             }
             Action::Contains { table, key, .. } => {
                 write!(f, "Contains(table: {}, key: {:?})", table.name, key)
+            }
+            Action::Len { table, .. } => write!(f, "Count(table: {})", table.name),
+            Action::Remove { table, key, .. } => {
+                write!(f, "Remove(table: {}, key: {:?})", table.name, key)
             }
         }
     }
@@ -233,6 +268,18 @@ fn start_worker() -> mpsc::Sender<Action> {
                     resp_tx,
                 } => {
                     let result = table.contains_key(key).map_err(Error::Fjall);
+                    resp_tx.send(result).is_err()
+                }
+                Action::Len { table, resp_tx } => {
+                    let result = table.len().map_err(Error::Fjall);
+                    resp_tx.send(result).is_err()
+                }
+                Action::Remove {
+                    table,
+                    key,
+                    resp_tx,
+                } => {
+                    let result = table.remove(key).map_err(Error::Fjall);
                     resp_tx.send(result).is_err()
                 }
             };
@@ -326,7 +373,7 @@ pub async fn create_table<'a, K: Key, V: Value>(
 
 pub async fn insert<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
-    key: K,
+    key: impl AsKey<K>,
     value: V,
 ) -> Result<(), Error> {
     let key = rmp_serde::to_vec(&key)?;
@@ -339,7 +386,10 @@ pub async fn insert<K: Key, V: Value>(
     Ok(())
 }
 
-pub async fn contains<K: Key, V: Value>(table: &UniTable<'_, K, V>, key: K) -> Result<bool, Error> {
+pub async fn contains<K: Key, V: Value>(
+    table: &UniTable<'_, K, V>,
+    key: impl AsKey<K>,
+) -> Result<bool, Error> {
     let key = rmp_serde::to_vec(&key)?;
     let contains = table
         .store
@@ -349,7 +399,10 @@ pub async fn contains<K: Key, V: Value>(table: &UniTable<'_, K, V>, key: K) -> R
     Ok(contains)
 }
 
-pub async fn get<K: Key, V: Value>(table: &UniTable<'_, K, V>, key: K) -> Result<Option<V>, Error> {
+pub async fn get<K: Key, V: Value>(
+    table: &UniTable<'_, K, V>,
+    key: impl AsKey<K>,
+) -> Result<Option<V>, Error> {
     let key = rmp_serde::to_vec(&key)?;
     let value = table.store.db.get(table.table.clone(), key.into()).await?;
     match value {
@@ -359,4 +412,24 @@ pub async fn get<K: Key, V: Value>(table: &UniTable<'_, K, V>, key: K) -> Result
         }
         None => Ok(None),
     }
+}
+
+pub async fn remove<K: Key, V: Value>(
+    table: &UniTable<'_, K, V>,
+    key: impl AsKey<K>,
+) -> Result<(), Error> {
+    let key = rmp_serde::to_vec(&key)?;
+    table.store.db.remove(table.table.clone(), key.into()).await
+}
+
+pub async fn len<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<usize, Error> {
+    let empty = table.store.db.is_table_empty(table.table.clone()).await?;
+    if empty {
+        return Ok(0);
+    }
+    table.store.db.len(table.table.clone()).await
+}
+
+pub async fn is_empty<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<bool, Error> {
+    table.store.db.is_table_empty(table.table.clone()).await
 }

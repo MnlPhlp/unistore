@@ -44,17 +44,19 @@ impl<K: Key, V: Value> std::fmt::Debug for UniTable<'_, K, V> {
     }
 }
 
+pub trait AsKey<K: Key>: Serialize {}
+impl<K: Key> AsKey<K> for K {}
+impl<K: Key> AsKey<K> for &K {}
+impl AsKey<String> for &str {}
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[cfg(target_arch = "wasm32")]
+    #[error("Error in WebAssembly implementation: {0}")]
     Wasm(#[from] wasm::Error),
     #[cfg(not(target_arch = "wasm32"))]
+    #[error("Error in native implementation: {0}")]
     Native(#[from] native::Error),
-}
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "UniStore Error: {self:?}")
-    }
 }
 
 impl UniStore {
@@ -83,7 +85,7 @@ impl UniStore {
 }
 
 impl<K: Key, V: Value> UniTable<'_, K, V> {
-    pub async fn insert(&self, key: K, value: V) -> Result<(), Error> {
+    pub async fn insert(&self, key: impl AsKey<K>, value: V) -> Result<(), Error> {
         #[cfg(target_arch = "wasm32")]
         wasm::insert(self, key, value).await?;
         #[cfg(not(target_arch = "wasm32"))]
@@ -91,7 +93,7 @@ impl<K: Key, V: Value> UniTable<'_, K, V> {
         Ok(())
     }
 
-    pub async fn contains(&self, key: K) -> Result<bool, Error> {
+    pub async fn contains(&self, key: impl AsKey<K>) -> Result<bool, Error> {
         #[cfg(target_arch = "wasm32")]
         let exists = wasm::contains(self, key).await?;
         #[cfg(not(target_arch = "wasm32"))]
@@ -99,12 +101,36 @@ impl<K: Key, V: Value> UniTable<'_, K, V> {
         Ok(exists)
     }
 
-    pub async fn get(&self, key: K) -> Result<Option<V>, Error> {
+    pub async fn get(&self, key: impl AsKey<K>) -> Result<Option<V>, Error> {
         #[cfg(target_arch = "wasm32")]
         let value = wasm::get(self, key).await?;
         #[cfg(not(target_arch = "wasm32"))]
         let value = native::get(self, key).await?;
         Ok(value)
+    }
+
+    pub async fn remove(&self, key: impl AsKey<K>) -> Result<(), Error> {
+        #[cfg(target_arch = "wasm32")]
+        wasm::remove(self, key).await?;
+        #[cfg(not(target_arch = "wasm32"))]
+        native::remove(self, key).await?;
+        Ok(())
+    }
+
+    pub async fn len(&self) -> Result<usize, Error> {
+        #[cfg(target_arch = "wasm32")]
+        let count = wasm::len(self).await?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let count = native::len(self).await?;
+        Ok(count)
+    }
+
+    pub async fn is_empty(&self) -> Result<bool, Error> {
+        #[cfg(target_arch = "wasm32")]
+        let empty = wasm::is_empty(self).await?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let empty = native::is_empty(self).await?;
+        Ok(empty)
     }
 }
 

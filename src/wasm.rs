@@ -1,14 +1,10 @@
 use std::rc::Rc;
 
-use idb::{DatabaseEvent, Factory, KeyRange, ObjectStoreParams};
-use serde::{Serialize, de::DeserializeOwned};
+use idb::{DatabaseEvent, Factory, ObjectStoreParams};
 use serde_wasm_bindgen::Serializer;
 use std::sync::Mutex;
-use wasm_bindgen::{JsCast, JsValue};
 
-use crate::{Key, UniStore, UniTable, Value};
-
-pub type Table = String;
+use crate::{AsKey, Key, UniStore, UniTable, Value};
 
 thread_local! {
     static DBS: Mutex<Vec<Rc<idb::Database>>> = Mutex::new(Vec::new());
@@ -132,7 +128,7 @@ pub async fn create_table<'a, K: Key, V: Value>(
 
 pub async fn insert<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
-    key: K,
+    key: impl AsKey<K>,
     value: V,
 ) -> Result<(), Error> {
     let tx = table
@@ -148,7 +144,10 @@ pub async fn insert<K: Key, V: Value>(
     Ok(())
 }
 
-pub async fn contains<K: Key, V: Value>(table: &UniTable<'_, K, V>, key: K) -> Result<bool, Error> {
+pub async fn contains<K: Key, V: Value>(
+    table: &UniTable<'_, K, V>,
+    key: impl AsKey<K>,
+) -> Result<bool, Error> {
     let tx = table
         .store
         .db
@@ -160,7 +159,10 @@ pub async fn contains<K: Key, V: Value>(table: &UniTable<'_, K, V>, key: K) -> R
     Ok(result.is_some())
 }
 
-pub async fn get<K: Key, V: Value>(table: &UniTable<'_, K, V>, key: K) -> Result<Option<V>, Error> {
+pub async fn get<K: Key, V: Value>(
+    table: &UniTable<'_, K, V>,
+    key: impl AsKey<K>,
+) -> Result<Option<V>, Error> {
     let tx = table
         .store
         .db
@@ -175,4 +177,42 @@ pub async fn get<K: Key, V: Value>(table: &UniTable<'_, K, V>, key: K) -> Result
     } else {
         Ok(None)
     }
+}
+
+pub async fn len<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<usize, Error> {
+    let tx = table
+        .store
+        .db
+        .get_db()
+        .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
+    let store = tx.object_store(&table.name)?;
+    let count = store.count(None)?.await?;
+    Ok(count as usize)
+}
+
+pub async fn remove<K: Key, V: Value>(
+    table: &UniTable<'_, K, V>,
+    key: impl AsKey<K>,
+) -> Result<(), Error> {
+    let tx = table
+        .store
+        .db
+        .get_db()
+        .transaction(&[table.name.as_str()], idb::TransactionMode::ReadWrite)?;
+    let store = tx.object_store(&table.name)?;
+    let key = key.serialize(&Serializer::json_compatible()).unwrap();
+    store.delete(key)?.await?;
+    tx.commit()?.await?;
+    Ok(())
+}
+
+pub async fn is_empty<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<bool, Error> {
+    let tx = table
+        .store
+        .db
+        .get_db()
+        .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
+    let store = tx.object_store(&table.name)?;
+    let count = store.count(None)?.await?;
+    Ok(count == 0)
 }
