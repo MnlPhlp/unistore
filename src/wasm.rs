@@ -4,7 +4,7 @@ use idb::{DatabaseEvent, Factory, ObjectStoreParams};
 use serde_wasm_bindgen::Serializer;
 use std::sync::Mutex;
 
-use crate::{AsKey, Key, UniStore, UniTable, Value};
+use crate::{AsKey, UniStore, UniTable, Value};
 
 thread_local! {
     static DBS: Mutex<Vec<Rc<idb::Database>>> = Mutex::new(Vec::new());
@@ -138,7 +138,10 @@ pub async fn insert<K: Key, V: Value>(
         .transaction(&[table.name.as_str()], idb::TransactionMode::ReadWrite)?;
     let store = tx.object_store(&table.name)?;
     let value = &value.serialize(&Serializer::json_compatible()).unwrap();
-    let key = &key.serialize(&Serializer::json_compatible()).unwrap();
+    let key = &key
+        .as_key()
+        .serialize(&Serializer::json_compatible())
+        .unwrap();
     store.add(value, Some(key))?.await?;
     tx.commit()?.await?;
     Ok(())
@@ -154,7 +157,10 @@ pub async fn contains<K: Key, V: Value>(
         .get_db()
         .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
     let store = tx.object_store(&table.name)?;
-    let key = key.serialize(&Serializer::json_compatible()).unwrap();
+    let key = key
+        .as_key()
+        .serialize(&Serializer::json_compatible())
+        .unwrap();
     let result = store.get(key)?.await?;
     Ok(result.is_some())
 }
@@ -169,7 +175,10 @@ pub async fn get<K: Key, V: Value>(
         .get_db()
         .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
     let store = tx.object_store(&table.name)?;
-    let key = key.serialize(&Serializer::json_compatible()).unwrap();
+    let key = key
+        .as_key()
+        .serialize(&Serializer::json_compatible())
+        .unwrap();
     let result = store.get(key)?.await?;
     if let Some(value) = result {
         let value: V = serde_wasm_bindgen::from_value(value)?;
@@ -200,7 +209,10 @@ pub async fn remove<K: Key, V: Value>(
         .get_db()
         .transaction(&[table.name.as_str()], idb::TransactionMode::ReadWrite)?;
     let store = tx.object_store(&table.name)?;
-    let key = key.serialize(&Serializer::json_compatible()).unwrap();
+    let key = key
+        .as_key()
+        .serialize(&Serializer::json_compatible())
+        .unwrap();
     store.delete(key)?.await?;
     tx.commit()?.await?;
     Ok(())
@@ -216,3 +228,13 @@ pub async fn is_empty<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<bo
     let count = store.count(None)?.await?;
     Ok(count == 0)
 }
+
+pub async fn get_prefix<K: Key, V: Value>(
+    table: &UniTable<'_, K, V>,
+    prefix: impl AsKey<K>,
+) -> Result<Vec<(K, V)>, Error> {
+    todo!();
+}
+
+pub trait Key: serde::Serialize + serde::de::DeserializeOwned {}
+impl<T: serde::Serialize + serde::de::DeserializeOwned> Key for T {}

@@ -1,15 +1,16 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+#[cfg(not(target_arch = "wasm32"))]
+use native::Key;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
+#[cfg(target_arch = "wasm32")]
+use wasm::Key;
 
 use std::marker::PhantomData;
 
 pub use async_std::sync::Mutex;
 use serde::{Serialize, de::DeserializeOwned};
-
-pub trait Key: Serialize + DeserializeOwned {}
-impl<T: Serialize + DeserializeOwned> Key for T {}
 
 pub trait Value: Serialize + DeserializeOwned {}
 impl<T: Serialize + DeserializeOwned> Value for T {}
@@ -44,10 +45,24 @@ impl<K: Key, V: Value> std::fmt::Debug for UniTable<'_, K, V> {
     }
 }
 
-pub trait AsKey<K: Key>: Serialize {}
-impl<K: Key> AsKey<K> for K {}
-impl<K: Key> AsKey<K> for &K {}
-impl AsKey<String> for &str {}
+pub trait AsKey<K: Key> {
+    fn as_key(self) -> K;
+}
+impl<K: Key> AsKey<K> for K {
+    fn as_key(self) -> K {
+        self
+    }
+}
+impl<K: Key + Copy> AsKey<K> for &K {
+    fn as_key(self) -> K {
+        *self
+    }
+}
+impl AsKey<String> for &str {
+    fn as_key(self) -> String {
+        self.to_string()
+    }
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -133,6 +148,14 @@ impl<K: Key, V: Value> UniTable<'_, K, V> {
         #[cfg(not(target_arch = "wasm32"))]
         let empty = native::is_empty(self).await?;
         Ok(empty)
+    }
+
+    pub async fn get_prefix(&self, prefix: impl AsKey<K>) -> Result<Vec<(K, V)>, Error> {
+        #[cfg(target_arch = "wasm32")]
+        let values = wasm::get_prefix(self, prefix).await?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let values = native::get_prefix(self, prefix).await?;
+        Ok(values)
     }
 }
 

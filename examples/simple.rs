@@ -10,7 +10,7 @@ async fn main() {
 }
 
 async fn inner() -> Result<(), Error> {
-    let store = UniStore::new("example_store").await?;
+    let store = UniStore::new("com", "example", "unistore").await?;
 
     // Create a table with string keys and values
     let table = store.create_table("table1", false).await?;

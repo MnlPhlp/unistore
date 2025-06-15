@@ -6,7 +6,7 @@ use futures::{
 };
 use tracing::info;
 
-use crate::{AsKey, Key, UniStore, UniTable, Value};
+use crate::{AsKey, UniStore, UniTable, Value};
 
 pub type Table = PartitionHandle;
 
@@ -21,7 +21,7 @@ pub enum Error {
     #[error("Receiving from oneshot channel failed: {0}")]
     OneShot(#[from] oneshot::Canceled),
     #[error("Key type mismatch: {0}")]
-    KeyTypeMismatch(rmp_serde::decode::Error),
+    KeyTypeMismatch(String),
     #[error("Table already exists with different Value type")]
     ValueTypeMismatch(rmp_serde::decode::Error),
     #[error("RMP encoding error: {0}")]
@@ -364,13 +364,13 @@ pub async fn create_table<'a, K: Key, V: Value>(
     let mut replace = false;
     if let Some((key, val)) = store.db.first_key_value(table.clone()).await? {
         // If the table is not empty, check if the types match
-        if let Err(e) = rmp_serde::from_slice::<K>(&key) {
+        if let Err(e) = K::from_slice(key) {
             if replace_if_incomatible {
                 // If we are replacing, we can ignore the type mismatch
                 tracing::warn!("Replacing table {} due to key type mismatch: {}", name, e);
                 replace = true;
             } else {
-                return Err(Error::KeyTypeMismatch(e));
+                return Err(e);
             }
         }
         if let Err(e) = rmp_serde::from_slice::<V>(&val) {
@@ -402,12 +402,12 @@ pub async fn insert<K: Key, V: Value>(
     key: impl AsKey<K>,
     value: V,
 ) -> Result<(), Error> {
-    let key = rmp_serde::to_vec(&key)?;
+    let key = key.as_key().as_slice();
     let value = rmp_serde::to_vec(&value)?;
     table
         .store
         .db
-        .insert(table.table.clone(), key.into(), value.into())
+        .insert(table.table.clone(), key, value.into())
         .await?;
     Ok(())
 }
@@ -416,7 +416,7 @@ pub async fn contains<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     key: impl AsKey<K>,
 ) -> Result<bool, Error> {
-    let key = rmp_serde::to_vec(&key)?;
+    let key = key.as_key().as_slice();
     let contains = table
         .store
         .db
@@ -429,7 +429,7 @@ pub async fn get<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     key: impl AsKey<K>,
 ) -> Result<Option<V>, Error> {
-    let key = rmp_serde::to_vec(&key)?;
+    let key = key.as_key().as_slice();
     let value = table.store.db.get(table.table.clone(), key.into()).await?;
     match value {
         Some(value) => {
@@ -444,8 +444,8 @@ pub async fn remove<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     key: impl AsKey<K>,
 ) -> Result<(), Error> {
-    let key = rmp_serde::to_vec(&key)?;
-    table.store.db.remove(table.table.clone(), key.into()).await
+    let key = key.as_key().as_slice();
+    table.store.db.remove(table.table.clone(), key).await
 }
 
 pub async fn len<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<usize, Error> {
@@ -459,3 +459,62 @@ pub async fn len<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<usize, 
 pub async fn is_empty<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<bool, Error> {
     table.store.db.is_table_empty(table.table.clone()).await
 }
+
+pub async fn get_prefix<K: Key, V: Value>(
+    table: &UniTable<'_, K, V>,
+    prefix: impl AsKey<K>,
+) -> Result<Vec<(K, V)>, Error> {
+    // TODO: use worker thread
+    futures::future::ready(()).await;
+    let prefix = prefix.as_key().as_slice();
+    let table = table.table.clone();
+
+    let items = table.prefix(prefix);
+    let mapped = items
+        .map(|i| -> Result<(K, V), Error> {
+            let (k, v) = i?;
+            let key = K::from_slice(k)?;
+            let value = rmp_serde::from_slice::<V>(&v)?;
+            Ok((key, value))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(mapped)
+}
+
+pub trait Key: Sized {
+    fn as_slice(self) -> Slice;
+    fn from_slice(slice: Slice) -> Result<Self, Error>;
+}
+impl Key for String {
+    fn as_slice(self) -> Slice {
+        self.into()
+    }
+
+    fn from_slice(slice: Slice) -> Result<Self, Error> {
+        Ok(String::from_utf8(slice.to_vec()).map_err(|e| Error::KeyTypeMismatch(e.to_string()))?)
+    }
+}
+macro_rules! num_key {
+    ($t:ty) => {
+        impl Key for $t {
+            fn as_slice(self) -> Slice {
+                self.to_be_bytes().into()
+            }
+
+            fn from_slice(slice: Slice) -> Result<Self, Error> {
+                let bytes = slice.as_ref().try_into().map_err(|_| {
+                    Error::KeyTypeMismatch(format!("Invalid slice length for {}", stringify!($t)))
+                })?;
+                Ok(Self::from_be_bytes(bytes))
+            }
+        }
+    };
+}
+num_key!(u8);
+num_key!(u16);
+num_key!(u32);
+num_key!(u64);
+num_key!(i8);
+num_key!(i16);
+num_key!(i32);
+num_key!(i64);
