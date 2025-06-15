@@ -7,12 +7,20 @@ description = "simple storage abstraction that works on wasm and native Targets"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/MnlPhlp/unistore"
 
+[workspace]
+resolver = "2"
+members = [
+    "./unistore_derive"
+]
+
 [dependencies]
-serde = "1.0.219"
+serde = { version = "1.0.219", features = ["derive"] }
 thiserror = "2.0.12"
 async-std = { version = "1.13.1", default-features = false, features = ["std"] }
 futures = { version = "0.3.31", default-features = false, features = ["std", "executor"] }
 tracing = "0.1.41"
+
+unistore_derive = { path = "./unistore_derive" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 idb = "0.6.4"

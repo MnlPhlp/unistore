@@ -6,7 +6,7 @@ use futures::{
 };
 use tracing::info;
 
-use crate::{AsKey, UniStore, UniTable, Value};
+use crate::{AsKey, AsValue, UniStore, UniTable, Value};
 
 pub type Table = PartitionHandle;
 
@@ -400,7 +400,7 @@ pub async fn create_table<'a, K: Key, V: Value>(
 pub async fn insert<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     key: impl AsKey<K>,
-    value: V,
+    value: impl AsValue<V>,
 ) -> Result<(), Error> {
     let key = key.as_key().as_slice();
     let value = rmp_serde::to_vec(&value)?;
@@ -417,11 +417,7 @@ pub async fn contains<K: Key, V: Value>(
     key: impl AsKey<K>,
 ) -> Result<bool, Error> {
     let key = key.as_key().as_slice();
-    let contains = table
-        .store
-        .db
-        .contains(table.table.clone(), key.into())
-        .await?;
+    let contains = table.store.db.contains(table.table.clone(), key).await?;
     Ok(contains)
 }
 
@@ -430,7 +426,7 @@ pub async fn get<K: Key, V: Value>(
     key: impl AsKey<K>,
 ) -> Result<Option<V>, Error> {
     let key = key.as_key().as_slice();
-    let value = table.store.db.get(table.table.clone(), key.into()).await?;
+    let value = table.store.db.get(table.table.clone(), key).await?;
     match value {
         Some(value) => {
             let value: V = rmp_serde::from_slice(&value)?;

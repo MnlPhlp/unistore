@@ -6,11 +6,16 @@ use native::Key;
 mod wasm;
 #[cfg(target_arch = "wasm32")]
 use wasm::Key;
+mod item;
+pub use item::UniStoreItem;
+#[cfg(test)]
+mod tests;
 
 use std::marker::PhantomData;
 
 pub use async_std::sync::Mutex;
 use serde::{Serialize, de::DeserializeOwned};
+pub use unistore_derive::UniStoreItem;
 
 pub trait Value: Serialize + DeserializeOwned {}
 impl<T: Serialize + DeserializeOwned> Value for T {}
@@ -63,6 +68,10 @@ impl AsKey<String> for &str {
         self.to_string()
     }
 }
+pub trait AsValue<V: Value>: Serialize {}
+impl<V: Value> AsValue<V> for V {}
+impl<V: Value> AsValue<V> for &V {}
+impl AsValue<String> for &str {}
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -102,7 +111,7 @@ impl UniStore {
 }
 
 impl<K: Key, V: Value> UniTable<'_, K, V> {
-    pub async fn insert(&self, key: impl AsKey<K>, value: V) -> Result<(), Error> {
+    pub async fn insert(&self, key: impl AsKey<K>, value: impl AsValue<V>) -> Result<(), Error> {
         #[cfg(target_arch = "wasm32")]
         wasm::insert(self, key, value).await?;
         #[cfg(not(target_arch = "wasm32"))]
