@@ -60,15 +60,17 @@ pub enum Error {
 }
 
 impl UniStore {
-    pub async fn new(name: &str) -> Result<Self, Error> {
+    pub async fn new(
+        qualifier: &str,
+        organization: &str,
+        application: &str,
+    ) -> Result<Self, Error> {
         #[cfg(target_arch = "wasm32")]
-        let db = wasm::create_database(name).await?;
+        let db = wasm::create_database(application).await?;
         #[cfg(not(target_arch = "wasm32"))]
-        let db = native::create_database(name).await?;
-        Ok(UniStore {
-            db,
-            name: name.to_string(),
-        })
+        let db = native::create_database(qualifier, organization, application).await?;
+        let name = format!("{qualifier}.{organization}.{application}");
+        Ok(UniStore { db, name })
     }
 
     pub async fn create_table<K: Key, V: Value>(
@@ -163,7 +165,7 @@ macro_rules! static_table {
 
 #[macro_export]
 macro_rules! static_store {
-    ($fn_name:ident, $name:literal) => {
+    ($fn_name:ident, $qualifier:literal, $organization:literal, $application:literal) => {
         async fn $fn_name() -> &'static $crate::UniStore {
             use $crate::Mutex;
             static STORE: std::sync::OnceLock<$crate::UniStore> = std::sync::OnceLock::new();
@@ -176,7 +178,9 @@ macro_rules! static_store {
             if let Some(store) = STORE.get() {
                 return store;
             }
-            let store = UniStore::new($name).await.expect("Failed to create store");
+            let store = UniStore::new($qualifier, $organization, $application)
+                .await
+                .expect("Failed to create store");
             STORE.set(store).expect("Failed to set store");
             STORE.get().unwrap()
         }

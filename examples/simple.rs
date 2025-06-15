@@ -1,7 +1,9 @@
+use tracing::Level;
 use unistore::{Error, UniStore};
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
     if let Err(e) = inner().await {
         eprintln!("Error: {e}");
     }

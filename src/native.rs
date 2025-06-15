@@ -4,6 +4,7 @@ use futures::{
     channel::{mpsc, oneshot},
     executor::block_on_stream,
 };
+use tracing::info;
 
 use crate::{AsKey, Key, UniStore, UniTable, Value};
 
@@ -27,11 +28,20 @@ pub enum Error {
     RmpEncode(#[from] rmp_serde::encode::Error),
     #[error("RMP decoding error: {0}")]
     RmpDecode(#[from] rmp_serde::decode::Error),
+    #[error("Data directory not found")]
+    DataDirNotFound,
 }
 
-fn get_path(name: &str) -> String {
-    // TODO: get proper path based on OS and environment
-    format!("./{name}.fjall")
+fn get_path(qualifier: &str, organization: &str, application: &str) -> Result<String, Error> {
+    let base_dirs = robius_directories::ProjectDirs::from(qualifier, organization, application)
+        .ok_or(Error::DataDirNotFound)?;
+    let data_dir = base_dirs.data_dir();
+    let path = data_dir
+        .join("unistore.fjall")
+        .to_string_lossy()
+        .to_string();
+    info!("Storage path: {path}");
+    Ok(path)
 }
 
 pub struct Database(mpsc::Sender<Action>);
@@ -131,7 +141,9 @@ impl Database {
 
 enum Action {
     CreateDb {
-        name: String,
+        qualifier: String,
+        organization: String,
+        application: String,
         resp_tx: oneshot::Sender<Result<(), Error>>,
     },
     CreateTable {
@@ -179,7 +191,12 @@ enum Action {
 impl std::fmt::Debug for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Action::CreateDb { name, .. } => write!(f, "CreateDb({name})"),
+            Action::CreateDb {
+                qualifier,
+                organization,
+                application,
+                ..
+            } => write!(f, "CreateDb({qualifier}.{organization}.{application})"),
             Action::CreateTable { name, .. } => write!(f, "CreateTable({name})"),
             Action::IsTableEmpty { .. } => write!(f, "IsTableEmpty"),
             Action::FirstKeyValue { .. } => write!(f, "FirstKeyValue"),
@@ -214,12 +231,15 @@ fn start_worker() -> mpsc::Sender<Action> {
         for action in block_on_stream(rx) {
             let err = match action {
                 Action::CreateDb {
-                    name,
+                    qualifier,
+                    organization,
+                    application,
                     resp_tx: resp,
                 } => {
-                    let ks = fjall::Config::new(get_path(&name)).open();
+                    let ks = get_path(&qualifier, &organization, &application)
+                        .and_then(|path| fjall::Config::new(path).open().map_err(Error::Fjall));
                     let result = match ks {
-                        Err(e) => Err(Error::Fjall(e)),
+                        Err(e) => Err(e),
                         Ok(ks) => {
                             keyspace = Some(ks);
                             Ok(())
@@ -307,11 +327,17 @@ fn handle_create_table(
     Ok((items, new))
 }
 
-pub(crate) async fn create_database(name: &str) -> Result<Database, Error> {
+pub(crate) async fn create_database(
+    qualifier: &str,
+    organization: &str,
+    application: &str,
+) -> Result<Database, Error> {
     let mut tx = start_worker();
     let (resp_tx, resp_rx) = oneshot::channel();
     tx.send(Action::CreateDb {
-        name: name.to_string(),
+        qualifier: qualifier.to_string(),
+        organization: organization.to_string(),
+        application: application.to_string(),
         resp_tx,
     })
     .await?;

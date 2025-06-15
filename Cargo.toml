@@ -24,6 +24,8 @@ thread_local = "1.1.9"
 fjall = "2.11.0"
 futures = { version = "0.3.31", default-features = false, features = ["std"] }
 rmp-serde = "1.3.0"
+robius-directories = "5.0.1"
 
 [dev-dependencies]
 tokio = { version = "1.45.1", features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = "0.3.19"
