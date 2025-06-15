@@ -80,11 +80,11 @@ impl UniStore {
         organization: &str,
         application: &str,
     ) -> Result<Self, Error> {
+        let name = format!("{qualifier}.{organization}.{application}");
         #[cfg(target_arch = "wasm32")]
-        let db = wasm::create_database(application).await?;
+        let db = wasm::create_database(&name).await?;
         #[cfg(not(target_arch = "wasm32"))]
         let db = native::create_database(qualifier, organization, application).await?;
-        let name = format!("{qualifier}.{organization}.{application}");
         Ok(UniStore { db, name })
     }
 
@@ -201,7 +201,7 @@ macro_rules! static_store {
             if let Some(store) = STORE.get() {
                 return store;
             }
-            let store = UniStore::new($qualifier, $organization, $application)
+            let store = $crate::UniStore::new($qualifier, $organization, $application)
                 .await
                 .expect("Failed to create store");
             STORE.set(store).expect("Failed to set store");
