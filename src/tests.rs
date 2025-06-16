@@ -1,3 +1,4 @@
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 mod derive_tests {
     extern crate self as unistore;
     use crate::{UniStoreItem, static_store};
@@ -13,7 +14,8 @@ mod derive_tests {
         value: String,
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_derive() {
         let value = Entry {
             key: 1,
@@ -41,8 +43,9 @@ mod index_tests {
         name: String,
     }
 
-    #[tokio::test]
-    async fn test_derive() {
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    async fn test_derived_index() {
         let value = IndexEntry {
             key: 1,
             name: "One".to_string(),
@@ -56,7 +59,8 @@ mod index_tests {
         assert_eq!(index_retrieved, vec![(1, value)]);
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_create_index() {
         let value = IndexEntry {
             key: 1,

@@ -67,6 +67,7 @@ pub async fn create_database(name: &str) -> Result<Database, Error> {
     Ok(Database::new(db))
 }
 
+// TODO: make sure transactions are closed in error cases
 pub async fn create_table<'a, K: Key, V: Value>(
     store: &'a UniStore,
     name: &str,
@@ -80,7 +81,9 @@ pub async fn create_table<'a, K: Key, V: Value>(
             // If the store already exists, check if the types match
             let tx = db.transaction(&[name], idb::TransactionMode::ReadOnly)?;
             let obj_store = tx.object_store(name)?;
-            if let Some(cursor) = obj_store.open_cursor(None, None)?.await? {
+            let cursor = obj_store.open_cursor(None, None)?.await?;
+            tx.commit()?.await?;
+            if let Some(cursor) = cursor {
                 let key = cursor.key()?;
                 let value = cursor.value()?;
                 if let Err(e) =
@@ -147,7 +150,7 @@ pub async fn insert<K: Key, V: Value>(
     let store = tx.object_store(&table.name)?;
     let value = &value.serialize(&Serializer::json_compatible()).unwrap();
     let key = JsValue::from_str(&key.as_key().to_key_string());
-    store.add(value, Some(&key))?.await?;
+    store.put(value, Some(&key))?.await?;
     tx.commit()?.await?;
     Ok(())
 }
@@ -164,6 +167,7 @@ pub async fn contains<K: Key, V: Value>(
     let store = tx.object_store(&table.name)?;
     let key = JsValue::from_str(&key.as_key().to_key_string());
     let result = store.get(key)?.await?;
+    tx.commit()?.await?;
     Ok(result.is_some())
 }
 
@@ -179,6 +183,7 @@ pub async fn get<K: Key, V: Value>(
     let store = tx.object_store(&table.name)?;
     let key = JsValue::from_str(&key.as_key().to_key_string());
     let result = store.get(key)?.await?;
+    tx.commit()?.await?;
     if let Some(value) = result {
         let value: V = serde_wasm_bindgen::from_value(value)?;
         Ok(Some(value))
@@ -195,6 +200,7 @@ pub async fn len<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<usize, 
         .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
     let store = tx.object_store(&table.name)?;
     let count = store.count(None)?.await?;
+    tx.commit()?.await?;
     Ok(count as usize)
 }
 
@@ -222,6 +228,7 @@ pub async fn is_empty<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<bo
         .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
     let store = tx.object_store(&table.name)?;
     let count = store.count(None)?.await?;
+    tx.commit()?.await?;
     Ok(count == 0)
 }
 
@@ -242,6 +249,7 @@ pub async fn get_prefix<K: Key, V: Value>(
     let result = store
         .get(idb::KeyRange::bound(&key, &successor, None, None)?)?
         .await?;
+    tx.commit()?.await?;
     todo!("Parse result: {result:?}");
     // if let Some(value) = result {
     //     let value: V = serde_wasm_bindgen::from_value(value)?;

@@ -1,6 +1,12 @@
 use tracing::Level;
 use unistore::{Error, UniStore};
 
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    panic!("This example is not supported on wasm32. Please run it in a native environment.");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
