@@ -6,6 +6,15 @@ pub struct UniIndex<'a, I: Key, K: Key, V: Value> {
     phantom: std::marker::PhantomData<I>,
 }
 
+impl<I: Key, K: Key, V: Value> std::fmt::Debug for UniIndex<'_, I, K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UniIndex")
+            .field("table", &self.table.name)
+            .field("index", &self.index.name)
+            .finish()
+    }
+}
+
 impl<I: Key, K: Key + Clone, V: Value> UniIndex<'_, I, K, V> {
     pub async fn get(&self, key: impl AsKey<I>) -> Result<Vec<(K, V)>, crate::Error> {
         let index_entries = self.index.get_prefix(key.as_key().to_key_string()).await?;

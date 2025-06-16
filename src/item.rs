@@ -13,6 +13,9 @@ pub trait UniStoreItem: Value + 'static {
         futures::future::ready(Err(Error::MissingIndex(index)))
     }
 
+    /// This function is called to insert indices for the item.
+    /// It is a no-op by default, but can be overridden in the implementation.
+    /// It is called by default when the item is inserted into the table using the traits `insert` method.
     fn insert_indices(&self) -> impl Future<Output = Result<(), Error>> {
         futures::future::ready(Ok(()))
     }
@@ -35,6 +38,7 @@ pub trait UniStoreItem: Value + 'static {
     fn insert(&self) -> impl Future<Output = Result<(), crate::Error>> {
         let key = self.unistore_key();
         async move {
+            self.insert_indices().await?;
             let table = Self::table().await;
             table.insert(key, self).await
         }

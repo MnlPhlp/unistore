@@ -36,7 +36,7 @@ mod index_tests {
 
     static_store!(get_test_store, "com", "example", "unistore");
 
-    #[derive(UniStoreItem, Serialize, Deserialize, PartialEq, Debug)]
+    #[derive(UniStoreItem, Serialize, Deserialize, PartialEq, Debug, Clone)]
     #[unistore(store = get_test_store)]
     struct IndexEntry {
         #[unistore(key)]
@@ -46,7 +46,7 @@ mod index_tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     async fn test_derived_index() {
         let value = IndexEntry {
             key: 1,
@@ -58,7 +58,11 @@ mod index_tests {
         let index_retrieved = IndexEntry::get_by_index("name", "One")
             .await
             .expect("Failed to get value by index");
-        assert_eq!(index_retrieved, vec![(1, value)]);
+        let name_retrived = IndexEntry::get_by_name("One")
+            .await
+            .expect("Failed to get value by name");
+        assert_eq!(index_retrieved, vec![(1, value.clone())]);
+        assert_eq!(name_retrived, vec![(1, value)]);
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]

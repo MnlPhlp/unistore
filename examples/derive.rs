@@ -9,7 +9,8 @@ static_store!(get_store, "com", "example", "unistore");
 struct Entry {
     #[unistore(key)]
     id: u32,
-    value: String,
+    #[unistore(index)]
+    name: String,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -29,10 +30,35 @@ async fn main() {
 async fn inner() -> Result<(), Error> {
     let value = Entry {
         id: 1,
-        value: "Hello, UniStore!".to_string(),
+        name: "One".to_string(),
     };
     value.insert().await?;
     let retrieved = Entry::get(1).await?;
-    assert_eq!(retrieved, Some(value));
+    assert_eq!(retrieved.as_ref(), Some(&value));
+
+    // the index can be used by the static method `get_by_index` with the index name and value
+    let index_retrieved = Entry::get_by_index("name", "One").await?;
+    assert_eq!(index_retrieved[0].0, 1);
+    assert_eq!(&index_retrieved[0].1, &value);
+
+    // the macro also generates a get method for each index
+    let index_retrieved = Entry::get_by_name("One").await?;
+    assert_eq!(index_retrieved[0].0, 1);
+    assert_eq!(&index_retrieved[0].1, &value);
+
+    // multiple entries can have the same index value
+    // this is why the functions return a vector of tuples
+    let value2 = Entry {
+        id: 2,
+        name: "One".to_string(),
+    };
+    value2.insert().await?;
+    let index_retrieved = Entry::get_by_name("One").await?;
+    assert_eq!(index_retrieved.len(), 2);
+    assert_eq!(index_retrieved[0].0, 1);
+    assert_eq!(&index_retrieved[0].1, &value);
+    assert_eq!(index_retrieved[1].0, 2);
+    assert_eq!(&index_retrieved[1].1, &value2);
+
     Ok(())
 }
