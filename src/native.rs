@@ -133,6 +133,22 @@ impl Database {
         .await?;
         resp_rx.await?
     }
+
+    async fn prefix(
+        &self,
+        table: PartitionHandle,
+        prefix: Vec<u8>,
+    ) -> Result<Vec<Result<(Slice, Slice), fjall::Error>>, Error> {
+        let mut tx = self.0.clone();
+        let (resp_tx, resp_rx) = oneshot::channel();
+        tx.send(Action::GetPrefix {
+            table,
+            prefix,
+            resp_tx,
+        })
+        .await?;
+        Ok(resp_rx.await?)
+    }
 }
 
 enum Action {
@@ -183,6 +199,11 @@ enum Action {
         key: Slice,
         resp_tx: oneshot::Sender<Result<(), Error>>,
     },
+    GetPrefix {
+        table: PartitionHandle,
+        prefix: Vec<u8>,
+        resp_tx: oneshot::Sender<Vec<Result<(Slice, Slice), fjall::Error>>>,
+    },
 }
 impl std::fmt::Debug for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -215,6 +236,9 @@ impl std::fmt::Debug for Action {
             Action::Len { table, .. } => write!(f, "Count(table: {})", table.name),
             Action::Remove { table, key, .. } => {
                 write!(f, "Remove(table: {}, key: {:?})", table.name, key)
+            }
+            Action::GetPrefix { prefix, .. } => {
+                write!(f, "GetPrefix(prefix: {prefix:?})")
             }
         }
     }
@@ -296,6 +320,14 @@ fn start_worker() -> mpsc::Sender<Action> {
                     resp_tx,
                 } => {
                     let result = table.remove(key).map_err(Error::Fjall);
+                    resp_tx.send(result).is_err()
+                }
+                Action::GetPrefix {
+                    table,
+                    prefix,
+                    resp_tx,
+                } => {
+                    let result = table.prefix(prefix).collect();
                     resp_tx.send(result).is_err()
                 }
             };
@@ -459,10 +491,9 @@ pub async fn get_prefix<K: Key, V: Value>(
     // TODO: use worker thread
     futures::future::ready(()).await;
     let prefix = prefix.as_key().as_bytes();
-    let table = table.table.clone();
-
-    let items = table.prefix(prefix);
+    let items = table.store.db.prefix(table.table.clone(), prefix).await?;
     let mapped = items
+        .into_iter()
         .map(|i| -> Result<(K, V), crate::Error> {
             let (k, v) = i.map_err(|e| crate::Error::Native(Error::Fjall(e)))?;
             let key = K::from_bytes(&k)?;
