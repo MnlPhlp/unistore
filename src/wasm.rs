@@ -138,6 +138,7 @@ pub async fn create_table<'a, K: Key, V: Value>(
     // else create a new object store
     let store_params = ObjectStoreParams::new();
     let version = db.version().expect("Failed to get database version");
+    db.close();
 
     let mut open_request = Factory::new()?
         .open(&store.name, Some(version + 1))
