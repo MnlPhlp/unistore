@@ -6,7 +6,7 @@ use futures::{
 };
 use tracing::info;
 
-use crate::{AsKey, AsValue, UniStore, UniTable, Value};
+use crate::{AsKey, AsValue, Key, UniStore, UniTable, Value};
 
 pub type Table = PartitionHandle;
 
@@ -20,10 +20,6 @@ pub enum Error {
     Mpsc(#[from] mpsc::SendError),
     #[error("Receiving from oneshot channel failed: {0}")]
     OneShot(#[from] oneshot::Canceled),
-    #[error("Key type mismatch: {0}")]
-    KeyTypeMismatch(String),
-    #[error("Table already exists with different Value type")]
-    ValueTypeMismatch(rmp_serde::decode::Error),
     #[error("RMP encoding error: {0}")]
     RmpEncode(#[from] rmp_serde::encode::Error),
     #[error("RMP decoding error: {0}")]
@@ -349,7 +345,7 @@ pub async fn create_table<'a, K: Key, V: Value>(
     store: &'a UniStore,
     name: &str,
     replace_if_incomatible: bool,
-) -> Result<UniTable<'a, K, V>, Error> {
+) -> Result<UniTable<'a, K, V>, crate::Error> {
     let (mut table, new) = store.db.create_table(name).await?;
     let empty = new || store.db.is_table_empty(table.clone()).await?;
     if new || empty {
@@ -364,7 +360,7 @@ pub async fn create_table<'a, K: Key, V: Value>(
     let mut replace = false;
     if let Some((key, val)) = store.db.first_key_value(table.clone()).await? {
         // If the table is not empty, check if the types match
-        if let Err(e) = K::from_slice(key) {
+        if let Err(e) = K::from_bytes(&key) {
             if replace_if_incomatible {
                 // If we are replacing, we can ignore the type mismatch
                 tracing::warn!("Replacing table {} due to key type mismatch: {}", name, e);
@@ -379,7 +375,7 @@ pub async fn create_table<'a, K: Key, V: Value>(
                 tracing::warn!("Replacing table {} due to value type mismatch: {}", name, e);
                 replace = true;
             } else {
-                return Err(Error::ValueTypeMismatch(e));
+                return Err(crate::Error::ValueTypeMismatch(e.to_string()));
             }
         }
     }
@@ -402,7 +398,7 @@ pub async fn insert<K: Key, V: Value>(
     key: impl AsKey<K>,
     value: impl AsValue<V>,
 ) -> Result<(), Error> {
-    let key = key.as_key().as_slice();
+    let key = key.as_key().as_bytes().into();
     let value = rmp_serde::to_vec(&value)?;
     table
         .store
@@ -416,7 +412,7 @@ pub async fn contains<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     key: impl AsKey<K>,
 ) -> Result<bool, Error> {
-    let key = key.as_key().as_slice();
+    let key = key.as_key().as_bytes().into();
     let contains = table.store.db.contains(table.table.clone(), key).await?;
     Ok(contains)
 }
@@ -425,7 +421,7 @@ pub async fn get<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     key: impl AsKey<K>,
 ) -> Result<Option<V>, Error> {
-    let key = key.as_key().as_slice();
+    let key = key.as_key().as_bytes().into();
     let value = table.store.db.get(table.table.clone(), key).await?;
     match value {
         Some(value) => {
@@ -440,7 +436,7 @@ pub async fn remove<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     key: impl AsKey<K>,
 ) -> Result<(), Error> {
-    let key = key.as_key().as_slice();
+    let key = key.as_key().as_bytes().into();
     table.store.db.remove(table.table.clone(), key).await
 }
 
@@ -459,58 +455,21 @@ pub async fn is_empty<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<bo
 pub async fn get_prefix<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     prefix: impl AsKey<K>,
-) -> Result<Vec<(K, V)>, Error> {
+) -> Result<Vec<(K, V)>, crate::Error> {
     // TODO: use worker thread
     futures::future::ready(()).await;
-    let prefix = prefix.as_key().as_slice();
+    let prefix = prefix.as_key().as_bytes();
     let table = table.table.clone();
 
     let items = table.prefix(prefix);
     let mapped = items
-        .map(|i| -> Result<(K, V), Error> {
-            let (k, v) = i?;
-            let key = K::from_slice(k)?;
-            let value = rmp_serde::from_slice::<V>(&v)?;
+        .map(|i| -> Result<(K, V), crate::Error> {
+            let (k, v) = i.map_err(|e| crate::Error::Native(Error::Fjall(e)))?;
+            let key = K::from_bytes(&k)?;
+            let value = rmp_serde::from_slice::<V>(&v)
+                .map_err(|e| crate::Error::Native(Error::RmpDecode(e)))?;
             Ok((key, value))
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(mapped)
 }
-
-pub trait Key: Sized {
-    fn as_slice(self) -> Slice;
-    fn from_slice(slice: Slice) -> Result<Self, Error>;
-}
-impl Key for String {
-    fn as_slice(self) -> Slice {
-        self.into()
-    }
-
-    fn from_slice(slice: Slice) -> Result<Self, Error> {
-        Ok(String::from_utf8(slice.to_vec()).map_err(|e| Error::KeyTypeMismatch(e.to_string()))?)
-    }
-}
-macro_rules! num_key {
-    ($t:ty) => {
-        impl Key for $t {
-            fn as_slice(self) -> Slice {
-                self.to_be_bytes().into()
-            }
-
-            fn from_slice(slice: Slice) -> Result<Self, Error> {
-                let bytes = slice.as_ref().try_into().map_err(|_| {
-                    Error::KeyTypeMismatch(format!("Invalid slice length for {}", stringify!($t)))
-                })?;
-                Ok(Self::from_be_bytes(bytes))
-            }
-        }
-    };
-}
-num_key!(u8);
-num_key!(u16);
-num_key!(u32);
-num_key!(u64);
-num_key!(i8);
-num_key!(i16);
-num_key!(i32);
-num_key!(i64);

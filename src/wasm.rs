@@ -3,8 +3,9 @@ use std::rc::Rc;
 use idb::{DatabaseEvent, Factory, ObjectStoreParams};
 use serde_wasm_bindgen::Serializer;
 use std::sync::Mutex;
+use wasm_bindgen::JsValue;
 
-use crate::{AsKey, UniStore, UniTable, Value};
+use crate::{AsKey, AsValue, Key, UniStore, UniTable, Value};
 
 thread_local! {
     static DBS: Mutex<Vec<Rc<idb::Database>>> = Mutex::new(Vec::new());
@@ -40,8 +41,13 @@ impl Database {
 pub enum Error {
     Idb(#[from] idb::Error),
     Serde(#[from] serde_wasm_bindgen::Error),
-    KeyTypeMismatch(serde_wasm_bindgen::Error),
+    CrateError(String),
     ValueTypeMismatch(serde_wasm_bindgen::Error),
+}
+impl From<crate::Error> for Error {
+    fn from(e: crate::Error) -> Self {
+        Self::CrateError(e.to_string())
+    }
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -77,12 +83,14 @@ pub async fn create_table<'a, K: Key, V: Value>(
             if let Some(cursor) = obj_store.open_cursor(None, None)?.await? {
                 let key = cursor.key()?;
                 let value = cursor.value()?;
-                if let Err(e) = serde_wasm_bindgen::from_value::<K>(key) {
+                if let Err(e) =
+                    K::from_key_string(&key.as_string().expect("Key has to be a string"))
+                {
                     if replace_if_incomatible {
                         replace = true;
                         break 'exists_check; // If we are replacing, break to create a new store
                     }
-                    return Err(Error::KeyTypeMismatch(e));
+                    return Err(e.into());
                 }
                 if let Err(e) = serde_wasm_bindgen::from_value::<V>(value) {
                     if replace_if_incomatible {
@@ -129,7 +137,7 @@ pub async fn create_table<'a, K: Key, V: Value>(
 pub async fn insert<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     key: impl AsKey<K>,
-    value: V,
+    value: impl AsValue<V>,
 ) -> Result<(), Error> {
     let tx = table
         .store
@@ -138,11 +146,8 @@ pub async fn insert<K: Key, V: Value>(
         .transaction(&[table.name.as_str()], idb::TransactionMode::ReadWrite)?;
     let store = tx.object_store(&table.name)?;
     let value = &value.serialize(&Serializer::json_compatible()).unwrap();
-    let key = &key
-        .as_key()
-        .serialize(&Serializer::json_compatible())
-        .unwrap();
-    store.add(value, Some(key))?.await?;
+    let key = JsValue::from_str(&key.as_key().to_key_string());
+    store.add(value, Some(&key))?.await?;
     tx.commit()?.await?;
     Ok(())
 }
@@ -157,10 +162,7 @@ pub async fn contains<K: Key, V: Value>(
         .get_db()
         .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
     let store = tx.object_store(&table.name)?;
-    let key = key
-        .as_key()
-        .serialize(&Serializer::json_compatible())
-        .unwrap();
+    let key = JsValue::from_str(&key.as_key().to_key_string());
     let result = store.get(key)?.await?;
     Ok(result.is_some())
 }
@@ -175,10 +177,7 @@ pub async fn get<K: Key, V: Value>(
         .get_db()
         .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
     let store = tx.object_store(&table.name)?;
-    let key = key
-        .as_key()
-        .serialize(&Serializer::json_compatible())
-        .unwrap();
+    let key = JsValue::from_str(&key.as_key().to_key_string());
     let result = store.get(key)?.await?;
     if let Some(value) = result {
         let value: V = serde_wasm_bindgen::from_value(value)?;
@@ -209,10 +208,7 @@ pub async fn remove<K: Key, V: Value>(
         .get_db()
         .transaction(&[table.name.as_str()], idb::TransactionMode::ReadWrite)?;
     let store = tx.object_store(&table.name)?;
-    let key = key
-        .as_key()
-        .serialize(&Serializer::json_compatible())
-        .unwrap();
+    let key = JsValue::from_str(&key.as_key().to_key_string());
     store.delete(key)?.await?;
     tx.commit()?.await?;
     Ok(())
@@ -233,8 +229,29 @@ pub async fn get_prefix<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     prefix: impl AsKey<K>,
 ) -> Result<Vec<(K, V)>, Error> {
-    todo!();
+    let tx = table
+        .store
+        .db
+        .get_db()
+        .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
+    let store = tx.object_store(&table.name)?;
+    let key_string = prefix.as_key().to_key_string();
+    let key = JsValue::from_str(&key_string);
+    let successor = JsValue::from_str(&get_successor(&key_string));
+    tracing::info!("Key: {key:?}, Successor: {successor:?}");
+    let result = store
+        .get(idb::KeyRange::bound(&key, &successor, None, None)?)?
+        .await?;
+    todo!("Parse result: {result:?}");
+    // if let Some(value) = result {
+    //     let value: V = serde_wasm_bindgen::from_value(value)?;
+    //     Ok(Some(value))
+    // } else {
+    //     Ok(None)
+    // }
 }
 
-pub trait Key: serde::Serialize + serde::de::DeserializeOwned {}
-impl<T: serde::Serialize + serde::de::DeserializeOwned> Key for T {}
+fn get_successor(val: &str) -> String {
+    let bytes = &val[..val.len() - 1];
+    format!("{}\x7f", bytes)
+}

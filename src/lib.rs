@@ -1,13 +1,12 @@
+mod index;
+mod item;
+mod key;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
-#[cfg(not(target_arch = "wasm32"))]
-use native::Key;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
-#[cfg(target_arch = "wasm32")]
-use wasm::Key;
-mod item;
 pub use item::UniStoreItem;
+pub use key::Key;
 #[cfg(test)]
 mod tests;
 
@@ -81,6 +80,12 @@ pub enum Error {
     #[cfg(not(target_arch = "wasm32"))]
     #[error("Error in native implementation: {0}")]
     Native(#[from] native::Error),
+    #[error("Missind index for {0}")]
+    MissingIndex(&'static str),
+    #[error("Key type mismatch: {0}")]
+    KeyTypeMismatch(String),
+    #[error("Table already exists with different Value type")]
+    ValueTypeMismatch(String),
 }
 
 impl UniStore {
