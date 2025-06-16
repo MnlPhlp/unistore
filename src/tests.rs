@@ -32,7 +32,23 @@ mod index_tests {
     use crate::{UniStoreItem, index::UniIndex, static_store};
     use serde::{Deserialize, Serialize};
 
-    static_store!(get_test_store, "com", "example", "unistore");
+    async fn get_test_store() -> &'static crate::UniStore {
+        use crate::Mutex;
+        static STORE: std::sync::OnceLock<crate::UniStore> = std::sync::OnceLock::new();
+        static INITIALIZING: Mutex<()> = Mutex::new(());
+        if let Some(store) = STORE.get() {
+            return store;
+        }
+        let _lock = INITIALIZING.lock().await;
+        if let Some(store) = STORE.get() {
+            return store;
+        }
+        let store = crate::UniStore::new("com", "example", "unistore")
+            .await
+            .expect("Failed to create store");
+        STORE.set(store).expect("Failed to set store");
+        STORE.get().unwrap()
+    }
 
     #[derive(UniStoreItem, Serialize, Deserialize, PartialEq, Debug)]
     #[unistore(store = get_test_store)]
@@ -66,9 +82,13 @@ mod index_tests {
             key: 1,
             name: "One".to_string(),
         };
+        let table = get_test_store()
+            .await
+            .create_table::<u32, IndexEntry>("index_test", false)
+            .await
+            .expect("Failed to create table");
+        panic!("Marker");
 
-        println!("Creating table");
-        let table = IndexEntry::table().await;
         println!("Creating index");
         let index: UniIndex<String, _, _> = table
             .create_index("name")

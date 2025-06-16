@@ -3,7 +3,7 @@ mod item;
 mod key;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
-#[cfg(target_arch = "wasm32")]
+// #[cfg(target_arch = "wasm32")]
 mod wasm;
 pub use item::UniStoreItem;
 pub use key::Key;

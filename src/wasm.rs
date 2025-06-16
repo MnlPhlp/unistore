@@ -67,6 +67,23 @@ pub async fn create_database(name: &str) -> Result<Database, Error> {
     Ok(Database::new(db))
 }
 
+async fn with_transaction<FUNC, FUT, R>(
+    db: &Database,
+    store_names: &[&str],
+    mode: idb::TransactionMode,
+    f: FUNC,
+) -> Result<R, Error>
+where
+    FUNC: FnOnce(Rc<idb::Transaction>) -> FUT,
+    FUT: Future<Output = Result<R, Error>>,
+{
+    let tx = Rc::new(db.get_db().transaction(store_names, mode)?);
+    let result = f(tx.clone()).await;
+    let tx = Rc::into_inner(tx).expect("Transaction can not be borrowed in 'with_transaction'");
+    tx.commit().unwrap().await.unwrap();
+    result
+}
+
 // TODO: make sure transactions are closed in error cases
 pub async fn create_table<'a, K: Key, V: Value>(
     store: &'a UniStore,
@@ -79,10 +96,17 @@ pub async fn create_table<'a, K: Key, V: Value>(
     'exists_check: {
         if db.store_names().iter().any(|s| s == name) {
             // If the store already exists, check if the types match
-            let tx = db.transaction(&[name], idb::TransactionMode::ReadOnly)?;
-            let obj_store = tx.object_store(name)?;
-            let cursor = obj_store.open_cursor(None, None)?.await?;
-            tx.commit()?.await?;
+            let cursor = with_transaction(
+                &store.db,
+                &[name],
+                idb::TransactionMode::ReadOnly,
+                |tx| async move {
+                    let obj_store = tx.object_store(name)?;
+                    let cursor = obj_store.open_cursor(None, None)?.await?;
+                    Ok(cursor)
+                },
+            )
+            .await?;
             if let Some(cursor) = cursor {
                 let key = cursor.key()?;
                 let value = cursor.value()?;
@@ -114,7 +138,6 @@ pub async fn create_table<'a, K: Key, V: Value>(
     // else create a new object store
     let store_params = ObjectStoreParams::new();
     let version = db.version().expect("Failed to get database version");
-    db.close();
 
     let mut open_request = Factory::new()?
         .open(&store.name, Some(version + 1))
@@ -142,16 +165,19 @@ pub async fn insert<K: Key, V: Value>(
     key: impl AsKey<K>,
     value: impl AsValue<V>,
 ) -> Result<(), Error> {
-    let tx = table
-        .store
-        .db
-        .get_db()
-        .transaction(&[table.name.as_str()], idb::TransactionMode::ReadWrite)?;
-    let store = tx.object_store(&table.name)?;
-    let value = &value.serialize(&Serializer::json_compatible()).unwrap();
-    let key = JsValue::from_str(&key.as_key().to_key_string());
-    store.put(value, Some(&key))?.await?;
-    tx.commit()?.await?;
+    with_transaction(
+        &table.store.db,
+        &[&table.name],
+        idb::TransactionMode::ReadWrite,
+        |tx| async move {
+            let store = tx.object_store(&table.name)?;
+            let value = &value.serialize(&Serializer::json_compatible()).unwrap();
+            let key = JsValue::from_str(&key.as_key().to_key_string());
+            store.put(value, Some(&key))?.await?;
+            Ok(())
+        },
+    )
+    .await?;
     Ok(())
 }
 
@@ -159,15 +185,18 @@ pub async fn contains<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     key: impl AsKey<K>,
 ) -> Result<bool, Error> {
-    let tx = table
-        .store
-        .db
-        .get_db()
-        .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
-    let store = tx.object_store(&table.name)?;
     let key = JsValue::from_str(&key.as_key().to_key_string());
-    let result = store.get(key)?.await?;
-    tx.commit()?.await?;
+    let result = with_transaction(
+        &table.store.db,
+        &[&table.name],
+        idb::TransactionMode::ReadOnly,
+        |tx| async move {
+            let store = tx.object_store(&table.name)?;
+            let val = store.get(key)?.await?;
+            Ok(val)
+        },
+    )
+    .await?;
     Ok(result.is_some())
 }
 
@@ -175,15 +204,18 @@ pub async fn get<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     key: impl AsKey<K>,
 ) -> Result<Option<V>, Error> {
-    let tx = table
-        .store
-        .db
-        .get_db()
-        .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
-    let store = tx.object_store(&table.name)?;
     let key = JsValue::from_str(&key.as_key().to_key_string());
-    let result = store.get(key)?.await?;
-    tx.commit()?.await?;
+    let result = with_transaction(
+        &table.store.db,
+        &[&table.name],
+        idb::TransactionMode::ReadOnly,
+        |tx| async move {
+            let store = tx.object_store(&table.name)?;
+            let result = store.get(key)?.await?;
+            Ok(result)
+        },
+    )
+    .await?;
     if let Some(value) = result {
         let value: V = serde_wasm_bindgen::from_value(value)?;
         Ok(Some(value))
@@ -193,14 +225,17 @@ pub async fn get<K: Key, V: Value>(
 }
 
 pub async fn len<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<usize, Error> {
-    let tx = table
-        .store
-        .db
-        .get_db()
-        .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
-    let store = tx.object_store(&table.name)?;
-    let count = store.count(None)?.await?;
-    tx.commit()?.await?;
+    let count = with_transaction(
+        &table.store.db,
+        &[&table.name],
+        idb::TransactionMode::ReadOnly,
+        |tx| async move {
+            let store = tx.object_store(&table.name)?;
+            let count = store.count(None)?.await?;
+            Ok(count)
+        },
+    )
+    .await?;
     Ok(count as usize)
 }
 
@@ -208,48 +243,46 @@ pub async fn remove<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     key: impl AsKey<K>,
 ) -> Result<(), Error> {
-    let tx = table
-        .store
-        .db
-        .get_db()
-        .transaction(&[table.name.as_str()], idb::TransactionMode::ReadWrite)?;
-    let store = tx.object_store(&table.name)?;
-    let key = JsValue::from_str(&key.as_key().to_key_string());
-    store.delete(key)?.await?;
-    tx.commit()?.await?;
+    with_transaction(
+        &table.store.db,
+        &[&table.name],
+        idb::TransactionMode::ReadWrite,
+        |tx| async move {
+            let store = tx.object_store(&table.name)?;
+            let key = JsValue::from_str(&key.as_key().to_key_string());
+            store.delete(key)?.await?;
+            Ok(())
+        },
+    )
+    .await?;
     Ok(())
 }
 
 pub async fn is_empty<K: Key, V: Value>(table: &UniTable<'_, K, V>) -> Result<bool, Error> {
-    let tx = table
-        .store
-        .db
-        .get_db()
-        .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
-    let store = tx.object_store(&table.name)?;
-    let count = store.count(None)?.await?;
-    tx.commit()?.await?;
-    Ok(count == 0)
+    len(table).await.map(|count| count == 0)
 }
 
 pub async fn get_prefix<K: Key, V: Value>(
     table: &UniTable<'_, K, V>,
     prefix: impl AsKey<K>,
 ) -> Result<Vec<(K, V)>, Error> {
-    let tx = table
-        .store
-        .db
-        .get_db()
-        .transaction(&[table.name.as_str()], idb::TransactionMode::ReadOnly)?;
-    let store = tx.object_store(&table.name)?;
     let key_string = prefix.as_key().to_key_string();
     let key = JsValue::from_str(&key_string);
     let successor = JsValue::from_str(&get_successor(&key_string));
     tracing::info!("Key: {key:?}, Successor: {successor:?}");
-    let result = store
-        .get(idb::KeyRange::bound(&key, &successor, None, None)?)?
-        .await?;
-    tx.commit()?.await?;
+    let result = with_transaction(
+        &table.store.db,
+        &[&table.name],
+        idb::TransactionMode::ReadOnly,
+        |tx| async move {
+            let store = tx.object_store(&table.name)?;
+            let result = store
+                .get(idb::KeyRange::bound(&key, &successor, None, None)?)?
+                .await?;
+            Ok(result)
+        },
+    )
+    .await?;
     todo!("Parse result: {result:?}");
     // if let Some(value) = result {
     //     let value: V = serde_wasm_bindgen::from_value(value)?;
