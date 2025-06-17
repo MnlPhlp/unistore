@@ -2,6 +2,10 @@
 name = "unistore_derive"
 version = "0.1.0"
 edition = "2024"
+authors = ["Manuel Philipp"]
+description = "derive macro for unistore"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/MnlPhlp/unistore"
 
 [lib]
 proc-macro = true
