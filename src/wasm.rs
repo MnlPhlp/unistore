@@ -43,6 +43,7 @@ pub enum Error {
     Serde(#[from] serde_wasm_bindgen::Error),
     CrateError(String),
     ValueTypeMismatch(serde_wasm_bindgen::Error),
+    NoCursor,
 }
 impl From<crate::Error> for Error {
     fn from(e: crate::Error) -> Self {
@@ -84,7 +85,6 @@ where
     result
 }
 
-// TODO: make sure transactions are closed in error cases
 pub async fn create_table<'a, K: Key, V: Value>(
     store: &'a UniStore,
     name: &str,
@@ -277,23 +277,51 @@ pub async fn get_prefix<K: Key, V: Value>(
         idb::TransactionMode::ReadOnly,
         |tx| async move {
             let store = tx.object_store(&table.name)?;
-            let result = store
-                .get(idb::KeyRange::bound(&key, &successor, None, None)?)?
-                .await?;
-            Ok(result)
+            let mut values = Vec::new();
+            let mut cursor = store
+                // .get()?
+                .open_cursor(
+                    Some(idb::Query::KeyRange(idb::KeyRange::bound(
+                        &key,
+                        &successor,
+                        None,
+                        Some(true),
+                    )?)),
+                    None,
+                )?
+                .await?
+                .ok_or(Error::NoCursor)?
+                .into_managed();
+            loop {
+                let Some(key) = cursor.key()? else {
+                    break;
+                };
+                let Some(value) = cursor.value()? else {
+                    break;
+                };
+                values.push((key, value));
+                if cursor.next(None).await.is_err() {
+                    break;
+                }
+            }
+            Ok(values)
         },
     )
     .await?;
-    todo!("Parse result: {result:?}");
-    // if let Some(value) = result {
-    //     let value: V = serde_wasm_bindgen::from_value(value)?;
-    //     Ok(Some(value))
-    // } else {
-    //     Ok(None)
-    // }
+    result
+        .into_iter()
+        .map(|(key, value)| {
+            let key_str = key.as_string().expect("Key should be a string");
+            let key = K::from_key_string(&key_str).map_err(Error::from)?;
+            let value: V = serde_wasm_bindgen::from_value(value).map_err(Error::from)?;
+            Ok((key, value))
+        })
+        .collect()
 }
 
 fn get_successor(val: &str) -> String {
     let bytes = &val[..val.len() - 1];
-    format!("{}\x7f", bytes)
+    let c = val.chars().last().unwrap();
+    let next = std::char::from_u32(c as u32 + 1).unwrap_or(c);
+    format!("{bytes}{next}")
 }

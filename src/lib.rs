@@ -190,7 +190,7 @@ macro_rules! static_table {
             if let Some(table) = TABLE.get() {
                 return table;
             }
-            let store = get_store().await;
+            let store = $get_store().await;
             let table = store
                 .create_table::<$key, $val>($name, true)
                 .await
