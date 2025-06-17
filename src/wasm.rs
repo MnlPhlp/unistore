@@ -64,7 +64,8 @@ pub async fn create_database(name: &str) -> Result<Database, Error> {
     let open_request = factory.open(name, None).unwrap();
 
     // `await` open request
-    let db = open_request.await?;
+    let mut db = open_request.await?;
+    db.on_version_change(|event| event.database().expect("database").close());
     Ok(Database::new(db))
 }
 
@@ -138,7 +139,6 @@ pub async fn create_table<'a, K: Key, V: Value>(
     // else create a new object store
     let store_params = ObjectStoreParams::new();
     let version = db.version().expect("Failed to get database version");
-    db.close();
 
     let mut open_request = Factory::new()?
         .open(&store.name, Some(version + 1))
@@ -151,7 +151,8 @@ pub async fn create_table<'a, K: Key, V: Value>(
         }
         let _ = edb.create_object_store(&name_string, store_params).unwrap();
     });
-    let new_db = open_request.await?;
+    let mut new_db = open_request.await?;
+    new_db.on_version_change(|event| event.database().expect("database").close());
     store.db.update(new_db);
 
     Ok(UniTable {
