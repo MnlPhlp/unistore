@@ -68,6 +68,16 @@ impl AsKey<String> for &str {
         self.to_string()
     }
 }
+impl AsKey<String> for bool {
+    fn as_key(self) -> String {
+        if self {
+            "1".to_string()
+        } else {
+            "0".to_string()
+        }
+    }
+}
+
 pub trait AsValue<V: Value>: Serialize {}
 impl<V: Value> AsValue<V> for V {}
 impl<V: Value> AsValue<V> for &V {}
@@ -77,7 +87,7 @@ impl AsValue<String> for &str {}
 pub enum Error {
     #[cfg(target_arch = "wasm32")]
     #[error("Error in WebAssembly implementation: {0}")]
-    Wasm(#[from] wasm::Error),
+    Wasm(String),
     #[cfg(not(target_arch = "wasm32"))]
     #[error("Error in native implementation: {0}")]
     Native(#[from] native::Error),
@@ -87,6 +97,13 @@ pub enum Error {
     KeyTypeMismatch(String),
     #[error("Table already exists with different Value type")]
     ValueTypeMismatch(String),
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<wasm::Error> for Error {
+    fn from(value: wasm::Error) -> Self {
+        Error::Wasm(value.to_string())
+    }
 }
 
 impl UniStore {

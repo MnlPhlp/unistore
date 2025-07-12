@@ -52,7 +52,7 @@ mod derive_tests {
             key: 1,
             value: "Hello, UniStore!".to_string(),
         };
-        value.insert().await.expect("Failed to insert value");
+        value.save().await.expect("Failed to insert value");
         let retrieved = Entry::get(1).await.expect("Failed to get value");
         assert_eq!(retrieved, Some(value));
     }
@@ -84,7 +84,7 @@ mod index_tests {
             key: 1,
             name: "One".to_string(),
         };
-        value.insert().await.expect("Failed to insert value");
+        value.save().await.expect("Failed to insert value");
         let retrieved = IndexEntry::get(1).await.expect("Failed to get value");
         assert_eq!(retrieved.as_ref(), Some(&value));
         let index_retrieved = IndexEntry::get_by_index("name", "One")

@@ -35,7 +35,16 @@ pub trait UniStoreItem: Value + 'static {
             table.get(key).await
         }
     }
-    fn insert(&self) -> impl Future<Output = Result<(), crate::Error>> {
+    fn get_first_by_index(
+        index: &'static str,
+        key: impl AsKey<String>,
+    ) -> impl Future<Output = Result<Option<(Self::Key, Self)>, crate::Error>> {
+        async move {
+            let table = Self::index_table(index).await?;
+            table.get_first(key).await
+        }
+    }
+    fn save(&self) -> impl Future<Output = Result<(), crate::Error>> {
         let key = self.unistore_key();
         async move {
             self.insert_indices().await?;

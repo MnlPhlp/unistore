@@ -233,12 +233,17 @@ pub fn derive_unistore_item(input: proc_macro::TokenStream) -> proc_macro::Token
     };
 
     let index_getters = indices.iter().map(|index| {
-        let fn_name = format_ident!("get_by_{}", index.name);
         let name = snake_case(&index.name.to_string()).to_token_stream();
+        let fn_name = format_ident!("get_by_{}", index.name);
+        let fn_name_first = format_ident!("get_first_by_{}", index.name);
         quote! {
             pub async fn #fn_name(value: &str) -> Result<Vec<(#key, Self)>, unistore::Error> {
                 let index_table = Self::index_table(#name).await?;
                 index_table.get(value).await
+            }
+            pub async fn #fn_name_first(value: &str) -> Result<Option<(#key, Self)>, unistore::Error> {
+                let index_table = Self::index_table(#name).await?;
+                index_table.get_first(value).await
             }
         }
     });

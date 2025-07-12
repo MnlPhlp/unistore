@@ -19,7 +19,7 @@ impl<I: Key, K: Key + Clone, V: Value> UniIndex<'_, I, K, V> {
     pub async fn get(&self, key: impl AsKey<I>) -> Result<Vec<(K, V)>, crate::Error> {
         let index_entries = self.index.get_prefix(key.as_key().to_key_string()).await?;
         let mut results = Vec::new();
-        for (index_key, _) in index_entries {
+        for (index_key, ()) in index_entries {
             let (_, key) = index_key
                 .split_once('\0')
                 .expect("Index key should contain a separator");
@@ -29,6 +29,22 @@ impl<I: Key, K: Key + Clone, V: Value> UniIndex<'_, I, K, V> {
             }
         }
         Ok(results)
+    }
+
+    pub async fn get_first(&self, key: impl AsKey<I>) -> Result<Option<(K, V)>, crate::Error> {
+        let index_entries = self.index.get_prefix(key.as_key().to_key_string()).await?;
+        if index_entries.is_empty() {
+            return Ok(None);
+        }
+        let (index_key, ()) = index_entries.into_iter().next().unwrap();
+        let (_, key) = index_key
+            .split_once('\0')
+            .expect("Index key should contain a separator");
+        let key = K::from_key_string(key)?;
+        if let Some(value) = self.table.get(key.clone()).await? {
+            return Ok(Some((key, value)));
+        }
+        Ok(None)
     }
 
     pub async fn insert(

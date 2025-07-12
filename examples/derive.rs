@@ -32,7 +32,7 @@ async fn inner() -> Result<(), Error> {
         id: 1,
         name: "One".to_string(),
     };
-    value.insert().await?;
+    value.save().await?;
     let retrieved = Entry::get(1).await?;
     assert_eq!(retrieved.as_ref(), Some(&value));
 
@@ -52,7 +52,7 @@ async fn inner() -> Result<(), Error> {
         id: 2,
         name: "One".to_string(),
     };
-    value2.insert().await?;
+    value2.save().await?;
     let index_retrieved = Entry::get_by_name("One").await?;
     assert_eq!(index_retrieved.len(), 2);
     assert_eq!(index_retrieved[0].0, 1);
