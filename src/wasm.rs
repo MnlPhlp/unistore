@@ -279,8 +279,7 @@ pub async fn get_prefix<K: Key, V: Value>(
         |tx| async move {
             let store = tx.object_store(&table.name)?;
             let mut values = Vec::new();
-            let mut cursor = store
-                // .get()?
+            let cursor = store
                 .open_cursor(
                     Some(idb::Query::KeyRange(idb::KeyRange::bound(
                         &key,
@@ -290,9 +289,11 @@ pub async fn get_prefix<K: Key, V: Value>(
                     )?)),
                     None,
                 )?
-                .await?
-                .ok_or(Error::NoCursor)?
-                .into_managed();
+                .await?;
+            let mut cursor = match cursor {
+                Some(cursor) => cursor.into_managed(),
+                None => return Ok(Vec::new()),
+            };
             loop {
                 let Some(key) = cursor.key()? else {
                     break;

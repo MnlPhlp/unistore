@@ -3,6 +3,7 @@ use crate::{AsKey, Key, UniTable, Value};
 pub struct UniIndex<'a, I: Key, K: Key, V: Value> {
     pub table: &'a UniTable<'a, K, V>,
     pub index: UniTable<'a, String, ()>,
+    pub index_rev: UniTable<'a, String, String>,
     phantom: std::marker::PhantomData<I>,
 }
 
@@ -52,13 +53,14 @@ impl<I: Key, K: Key + Clone, V: Value> UniIndex<'_, I, K, V> {
         value: impl AsKey<I>,
         key: impl AsKey<K>,
     ) -> Result<(), crate::Error> {
-        let key = key.as_key();
-        let index_key = format!(
-            "{}\0{}",
-            value.as_key().to_key_string(),
-            key.as_key().to_key_string()
-        );
-        self.index.insert(index_key, ()).await?;
+        let key_str = key.as_key().to_key_string();
+        let value_str = value.as_key().to_key_string();
+        if let Some(existing) = self.index_rev.get(key_str.as_str()).await? {
+            self.index.remove(existing).await?;
+        }
+        let index_key = format!("{value_str}\0{key_str}");
+        self.index.insert(index_key.clone(), ()).await?;
+        self.index_rev.insert(key_str, index_key).await?;
         Ok(())
     }
 }
@@ -72,9 +74,14 @@ impl<K: Key, V: Value> UniTable<'_, K, V> {
             .store
             .create_table(&format!("{}_index_{index}", self.name), false)
             .await?;
+        let rev_index_table = self
+            .store
+            .create_table(&format!("{}_index_{index}_rev", self.name), false)
+            .await?;
         Ok(UniIndex {
             table: self,
             index: index_table,
+            index_rev: rev_index_table,
             phantom: std::marker::PhantomData,
         })
     }

@@ -23,6 +23,7 @@ fn snake_case(s: &str) -> String {
 #[derive(Debug)]
 struct Index {
     name: Ident,
+    ty: TokenStream,
     path: TokenStream,
 }
 struct StructArgs {
@@ -96,7 +97,8 @@ impl StructArgs {
                             )
                         });
                         let path = get_field_path(field);
-                        indices.push(Index { name, path });
+                        let ty = field.ty.to_token_stream();
+                        indices.push(Index { name, ty, path });
                     }
                     _ => emit_warning!(attr, "Unsupported unistore attribute"),
                 }
@@ -236,14 +238,17 @@ pub fn derive_unistore_item(input: proc_macro::TokenStream) -> proc_macro::Token
         let name = snake_case(&index.name.to_string()).to_token_stream();
         let fn_name = format_ident!("get_by_{}", index.name);
         let fn_name_first = format_ident!("get_first_by_{}", index.name);
+        let idx_type = &index.ty;
         quote! {
-            pub async fn #fn_name(value: &str) -> Result<Vec<(#key, Self)>, unistore::Error> {
+            pub async fn #fn_name(key: #idx_type) -> Result<Vec<(#key, Self)>, unistore::Error> {
+                use ::unistore::{AsKey, Key};
                 let index_table = Self::index_table(#name).await?;
-                index_table.get(value).await
+                index_table.get(key.as_key().to_key_string()).await
             }
-            pub async fn #fn_name_first(value: &str) -> Result<Option<(#key, Self)>, unistore::Error> {
+            pub async fn #fn_name_first(key: #idx_type) -> Result<Option<(#key, Self)>, unistore::Error> {
+                use ::unistore::{AsKey, Key};
                 let index_table = Self::index_table(#name).await?;
-                index_table.get_first(value).await
+                index_table.get_first(key.as_key().to_key_string()).await
             }
         }
     });

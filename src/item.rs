@@ -26,13 +26,13 @@ pub trait UniStoreItem: Value + 'static {
             table.get(key).await
         }
     }
-    fn get_by_index(
+    fn get_by_index<I: Key>(
         index: &'static str,
-        key: impl AsKey<String>,
+        key: impl AsKey<I>,
     ) -> impl Future<Output = Result<Vec<(Self::Key, Self)>, crate::Error>> {
         async move {
             let table = Self::index_table(index).await?;
-            table.get(key).await
+            table.get(key.as_key().to_key_string()).await
         }
     }
     fn get_first_by_index(
