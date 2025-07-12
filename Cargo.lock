@@ -1377,7 +1377,7 @@ checksum = "5a5f39404a5da50712a4c1eecf25e90dd62b613502b7e925fd4e4d19b5c96512"
 
 [[package]]
 name = "unistore"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-std",
  "fjall",
@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "unistore_derive"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proc-macro-error",
  "proc-macro2",

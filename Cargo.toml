@@ -1,6 +1,6 @@
 [package]
 name = "unistore"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 authors = ["Manuel Philipp"]
 description = "simple storage abstraction that works on wasm and native Targets"
@@ -20,7 +20,7 @@ async-std = { version = "1.13.1", default-features = false, features = ["std"] }
 futures = { version = "0.3.31", default-features = false, features = ["std", "executor"] }
 tracing = "0.1.41"
 
-unistore_derive = { path = "./unistore_derive", version = "0.1.0" }
+unistore_derive = { path = "./unistore_derive", version = "0.2.0" }
 wasm-bindgen-futures = "0.4.50"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
